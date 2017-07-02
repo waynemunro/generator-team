@@ -1,5 +1,8 @@
 const path = require('path');
+const uuidV4 = require('uuid/v4');
+const args = require(`../app/args`);
 const util = require(`../app/utility`);
+const prompts = require(`../app/prompt`);
 const generators = require('yeoman-generator');
 
 function construct() {
@@ -7,8 +10,8 @@ function construct() {
    generators.Base.apply(this, arguments);
 
    // Order is important 
-   this.argument(`applicationName`, { required: false, desc: `name of the application` });
-   this.argument('installDep', { required: false, desc: 'if true dependencies are installed' });
+   args.applicationName(this);
+   args.installDep(this);
 }
 
 function input() {
@@ -17,35 +20,10 @@ function input() {
    // when callbacks of prompt
    let cmdLnInput = this;
 
-   return this.prompt([{
-      type: `input`,
-      name: `applicationName`,
-      store: true,
-      message: `What is the name of your application?`,
-      validate: util.validateApplicationName,
-      when: function () {
-         return cmdLnInput.applicationName === undefined;
-      }
-   }, {
-      type: `list`,
-      name: `installDep`,
-      store: true,
-      message: "Install dependencies?",
-      default: `false`,
-      choices: [
-         {
-            name: `Yes`,
-            value: `true`
-         },
-         {
-            name: `No`,
-            value: `false`
-         }
-      ],
-      when: function () {
-         return cmdLnInput.installDep === undefined;
-      }
-   }]).then(function (a) {
+   return this.prompt([
+      prompts.applicationName(this),
+      prompts.installDep(this)
+   ]).then(function (a) {
       // Transfer answers to local object for use in the rest of the generator
       this.installDep = util.reconcileValue(a.installDep, cmdLnInput.installDep);
       this.applicationName = util.reconcileValue(a.applicationName, cmdLnInput.applicationName);
@@ -55,7 +33,11 @@ function input() {
 function writeFiles() {
    var tokens = {
       name: this.applicationName,
-      name_lowercase: this.applicationName.toLowerCase()
+      name_lowercase: this.applicationName.toLowerCase(),
+      appGuid: uuidV4(),
+      testsGuid: uuidV4(),
+      srcFolderGuid: uuidV4(),
+      testFolderGuid: uuidV4()
    };
 
    var src = this.sourceRoot();
@@ -64,9 +46,9 @@ function writeFiles() {
    // Root files
    this.copy(`${src}/README.md`, `${root}/README.md`);
    this.copy(`${src}/gitignore`, `${root}/.gitignore`);
-   this.copy(`${src}/global.json`, `${root}/global.json`);
    this.fs.copyTpl(`${src}/.bowerrc`, `${root}/.bowerrc`, tokens);
    this.fs.copyTpl(`${src}/bower.json`, `${root}/bower.json`, tokens);
+   this.fs.copyTpl(`${src}/app.sln`, `${root}/${this.applicationName}.sln`, tokens);
 
    // Web App project
    src = `${this.sourceRoot()}/src/app`;
@@ -84,7 +66,7 @@ function writeFiles() {
    this.fs.copyTpl(`${src}/Dockerfile`, `${root}/Dockerfile`, tokens);
    this.fs.copyTpl(`${src}/Program.cs`, `${root}/Program.cs`, tokens);
    this.fs.copyTpl(`${src}/Startup.cs`, `${root}/Startup.cs`, tokens);
-   this.fs.copyTpl(`${src}/project.json`, `${root}/project.json`, tokens);
+   this.fs.copyTpl(`${src}/app.csproj`, `${root}/${this.applicationName}.csproj`, tokens);   
    this.fs.copyTpl(`${src}/Views/_ViewImports.cshtml`, `${root}/Views/_ViewImports.cshtml`, tokens);
    this.fs.copyTpl(`${src}/Views/Shared/_Layout.cshtml`, `${root}/Views/Shared/_Layout.cshtml`, tokens);
    this.fs.copyTpl(`${src}/Controllers/HomeController.cs`, `${root}/Controllers/HomeController.cs`, tokens);
@@ -94,16 +76,20 @@ function writeFiles() {
    src = `${this.sourceRoot()}/test/app.tests`;
    root = `${this.applicationName}/test/${this.applicationName}.Tests`;
 
-   this.fs.copyTpl(`${src}/project.json`, `${root}/project.json`, tokens);
+   this.fs.copyTpl(`${src}/app.Tests.csproj`, `${root}/${this.applicationName}.Tests.csproj`, tokens);
    this.fs.copyTpl(`${src}/HomeControllerTest.cs`, `${root}/HomeControllerTest.cs`, tokens);
 
    // ARM Templates
    src = `${this.sourceRoot()}/templates`;
    root = `${this.applicationName}/templates`;
 
-   this.copy(`${src}/asp_arm.json`, `${root}/website.json`);
    this.copy(`${src}/parameters.xml`, `${root}/parameters.xml`);
+
+   this.copy(`${src}/asp_arm.json`, `${root}/website.json`);
    this.copy(`${src}/arm.parameters.json`, `${root}/website.parameters.json`);
+
+   this.copy(`${src}/docker_arm.json`, `${root}/docker.json`);
+   this.copy(`${src}/docker_arm.parameters.json`, `${root}/docker.parameters.json`);
 }
 
 function install() {
@@ -112,10 +98,14 @@ function install() {
 
       this.log(`+ Running bower install`);
       // I don't want to see the output of this command
-      this.spawnCommandSync('bower', ['install'], { stdio: ['pipe', 'pipe', process.stderr] });
+      this.spawnCommandSync('bower', ['install'], {
+         stdio: ['pipe', 'pipe', process.stderr]
+      });
 
       this.log(`+ Running dotnet restore`);
-      this.spawnCommandSync('dotnet', ['restore'], { stdio: ['pipe', 'pipe', process.stderr] });
+      this.spawnCommandSync('dotnet', ['restore'], {
+         stdio: ['pipe', 'pipe', process.stderr]
+      });
    }
 }
 

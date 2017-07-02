@@ -1,6 +1,7 @@
 // This is the code that deals with TFS
 const fs = require('fs');
 const async = require('async');
+const uuidV4 = require('uuid/v4');
 const request = require('request');
 const util = require('../app/utility');
 
@@ -60,7 +61,7 @@ function run(args, gen, done) {
                });
             },
             function (inParallel) {
-               if (args.target === `paas`) {
+               if (util.isPaaS(args)) {
                   util.findAzureServiceEndpoint(args.tfs, teamProject.id, azureSub, token, gen, function (err, ep) {
                      azureEndpoint = ep;
                      inParallel(err, azureEndpoint);
@@ -84,13 +85,15 @@ function run(args, gen, done) {
             approverId: approverId,
             teamProject: teamProject,
             template: args.releaseJson,
-            endpoint: azureEndpoint ? azureEndpoint.id : null,
+            dockerPorts: args.dockerPorts,
             dockerHostEndpoint: dockerEndpoint,
+            dockerRegistry: args.dockerRegistry,
             approverUniqueName: approverUniqueName,
             dockerRegistryId: args.dockerRegistryId,
             approverDisplayName: approverDisplayName,
             dockerRegistryEndpoint: dockerRegistryEndpoint,
-            dockerPorts: args.dockerPorts
+            endpoint: azureEndpoint ? azureEndpoint.id : null,
+            dockerRegistryPassword: args.dockerRegistryPassword
          };
 
          findOrCreateRelease(relArgs, gen, function (err, rel) {
@@ -133,11 +136,20 @@ function createRelease(args, gen, callback) {
 
    gen.log(`+ Creating CD release definition`);
 
+   // Qualify the image name with the dockerRegistryId for docker hub
+   // or the server name for other registries. 
+   let dockerNamespace = util.getImageNamespace(args.dockerRegistryId, args.dockerRegistryEndpoint);
+
+   // Azure website names have to be unique.  So we gen a GUID and addUserAgent
+   // a portion to the site name to help with that.
+   let uuid = uuidV4();
+   
    // Load the template and replace values.
    var tokens = {
       '{{BuildId}}': args.build.id,
       '"{{QueueId}}"': args.queueId,
       '{{WebAppName}}': args.appName,
+      '{{uuid}}': uuid.substring(0, 8),
       '{{BuildName}}': args.build.name,
       '{{ApproverId}}': args.approverId,
       '{{ProjectId}}': args.teamProject.id,
@@ -148,9 +160,12 @@ function createRelease(args, gen, callback) {
       '{{dockerPorts}}': args.dockerPorts ? args.dockerPorts : null,
       '{{ApproverUniqueName}}': args.approverUniqueName.replace("\\", "\\\\"),
       '{{dockerHostEndpoint}}': args.dockerHostEndpoint ? args.dockerHostEndpoint.id : null,
-      '{{dockerRegistryId}}': args.dockerRegistryId ? args.dockerRegistryId.toLowerCase() : null,
+      '{{dockerRegistryId}}': dockerNamespace,
+      '{{containerregistry}}': args.dockerRegistry,
+      '{{containerregistry_username}}': args.dockerRegistryId,
+      '{{containerregistry_password}}': args.dockerRegistryPassword,
       '{{dockerRegistryEndpoint}}': args.dockerRegistryEndpoint ? args.dockerRegistryEndpoint.id : null,
-      '{{ReleaseDefName}}': args.target === 'docker' ? `${args.teamProject.name}-Docker-CD` : `${args.teamProject.name}-CD`
+      '{{ReleaseDefName}}': (args.target === `docker` || args.target === `dockerpaas`) ? `${args.teamProject.name}-Docker-CD` : `${args.teamProject.name}-CD`
    };
 
    var contents = fs.readFileSync(args.template, 'utf8');

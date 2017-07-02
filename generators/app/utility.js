@@ -1,3 +1,4 @@
+const url = require('url');
 const request = require(`request`);
 const package = require('../../package.json');
 
@@ -12,6 +13,22 @@ String.prototype.replaceAll = function (search, replacement) {
    return target.split(search).join(replacement);
 };
 
+function getDockerRegisteryServer(server) {
+   let parts = url.parse(server);
+
+   return parts.host;
+}
+
+function getImageNamespace(registryId, endPoint) {
+   let dockerNamespace = registryId ? registryId.toLowerCase() : null;
+
+   if (endPoint && endPoint.authorization && !isDockerHub(endPoint.authorization.parameters.registry)) {
+      dockerNamespace = getDockerRegisteryServer(endPoint.authorization.parameters.registry);
+   }
+
+   return dockerNamespace;
+}
+
 function addUserAgent(options) {
    options.headers['user-agent'] = getUserAgent();
    return options;
@@ -22,21 +39,49 @@ function getUserAgent() {
 }
 
 function reconcileValue(first, second, fallback) {
-   return first ? first : (second ? second : fallback);
+   // The only way I found to get the CLI to work when I need
+   // to skip values is to enter " ". That space throws off 
+   // other portions of the code that test for the exisitence 
+   // of a value.  Triming the strings will only leave non
+   // whitespace.
+   return first ? first.trim() : (second ? second.trim() : fallback);
 }
 
-function getTargets() {
-   return [{
+// If the user has selected Java and Hosted Linux Preview you
+// can't select App Service because you have to use PowerShell
+// to convert the war file into a zip file.
+function getTargets(answers) {
+
+   if (answers.type === `aspFull`) {
+      return [{
+         name: `Azure App Service`,
+         value: `paas`
+      }];
+   }
+
+   let result = [{
       name: `Azure App Service`,
       value: `paas`
    }, {
-      name: `Docker`,
+      name: `Azure App Service Docker (Linux)`,
+      value: `dockerpaas`
+   }, {
+      name: `Docker Host`,
       value: `docker`
    }];
+
+   if (answers.type === `java` &&
+      answers.queue === `Hosted Linux Preview`) {
+      // Remove Azure App Service
+      result.splice(0, 1);
+   }
+
+   return result;
 }
 
-function getAppTypes() {
-   return [{
+function getAppTypes(answers) {
+   // Default to languages tha work on all agents
+   let types = [{
       name: `.NET Core`,
       value: `asp`
    }, {
@@ -46,10 +91,21 @@ function getAppTypes() {
       name: `Java`,
       value: `java`
    }];
+
+   // If this is not a Linux based agent also show
+   // .NET Full
+   if (answers.queue.indexOf(`Linux`) === -1) {
+      types.splice(1, 0, {
+         name: `.NET Full`,
+         value: `aspFull`
+      });
+   }
+
+   return types;
 }
 
 function getPATPrompt(answers) {
-   if(!answers.tfs) {
+   if (!answers.tfs) {
       // The user passed in the tfs value on the
       // command line but we still need to prompt
       // for the pat.  answers will not have a tfs
@@ -69,12 +125,22 @@ function getInstancePrompt() {
 }
 
 function getDefaultPortMapping(answers) {
-   if (answers.type === `java`) {
-      return `8080:8080`;
-   } else if (answers.type === `node`) {
-      return `3000:3000`;
+   if (answers.target === `docker`) {
+      if (answers.type === `java`) {
+         return `8080:8080`;
+      } else if (answers.type === `node`) {
+         return `3000:3000`;
+      } else {
+         return `80:80`;
+      }
    } else {
-      return `80:80`;
+      if (answers.type === `java`) {
+         return `8080`;
+      } else if (answers.type === `node`) {
+         return `3000`;
+      } else {
+         return `80`;
+      }
    }
 }
 
@@ -115,15 +181,19 @@ function validateDockerCertificatePath(input) {
 }
 
 function validateDockerHubID(input) {
-   return validateRequired(input, `You must provide a Docker Hub ID`);
+   return validateRequired(input, `You must provide a Docker Registry username`);
 }
 
 function validateDockerHubPassword(input) {
-   return validateRequired(input, `You must provide a Docker Hub Password`);
+   return validateRequired(input, `You must provide a Docker Registry Password`);
 }
 
-function validateDockerHubEmail(input) {
-   return validateRequired(input, `You must provide a Docker Hub Email`);
+function validateDockerRegistry(input) {
+   if (!input) {
+      return validateRequired(input, `You must provide a Docker Registry URL`);
+   }
+
+   return input.toLowerCase().match(/http/) === null ? `You must provide a Docker Registry URL including http(s)` : true;
 }
 
 function validateAzureSubID(input) {
@@ -171,7 +241,9 @@ function checkStatus(uri, token, gen, callback) {
 
    var options = addUserAgent({
       "method": `GET`,
-      "headers": { "authorization": `Basic ${token}` },
+      "headers": {
+         "authorization": `Basic ${token}`
+      },
       "url": `${uri}`
    });
 
@@ -206,9 +278,14 @@ function findDockerRegistryServiceEndpoint(account, projectId, dockerRegistry, t
 
    var options = addUserAgent({
       "method": `GET`,
-      "headers": { "cache-control": `no-cache`, "authorization": `Basic ${token}` },
+      "headers": {
+         "cache-control": `no-cache`,
+         "authorization": `Basic ${token}`
+      },
       "url": `${getFullURL(account)}/${projectId}/_apis/distributedtask/serviceendpoints`,
-      "qs": { "api-version": SERVICE_ENDPOINTS_API_VERSION }
+      "qs": {
+         "api-version": SERVICE_ENDPOINTS_API_VERSION
+      }
    });
 
    request(options, function (error, response, body) {
@@ -217,13 +294,37 @@ function findDockerRegistryServiceEndpoint(account, projectId, dockerRegistry, t
       // TODO: Test that authorization.parameters.registry === dockerHost.  But that requires
       // a second REST call once you know the ID of the dockerregistry type service endpoint.
       // For now assume any dockerregistry service endpoint is safe to use.
-      var endpoint = obj.value.find(function (i) { return i.type === `dockerregistry`; });
+      var endpoint = obj.value.find(function (i) {
+         return i.type === `dockerregistry`;
+      });
 
       if (endpoint === undefined) {
-         callback({ "message": `x Could not find Docker Registry Service Endpoint`, "code": `NotFound` }, undefined);
+         callback({
+            "message": `x Could not find Docker Registry Service Endpoint`,
+            "code": `NotFound`
+         }, undefined);
       } else {
-         callback(error, endpoint);
+         // Down stream we need the full endpoint so call again with the ID. This will return more data
+         getServiceEndpoint(account, projectId, endpoint.id, token, callback);
       }
+   });
+}
+
+function getServiceEndpoint(account, projectId, id, token, callback) {
+   var options = addUserAgent({
+      "method": `GET`,
+      "headers": {
+         "cache-control": `no-cache`,
+         "authorization": `Basic ${token}`
+      },
+      "url": `${getFullURL(account)}/${projectId}/_apis/distributedtask/serviceendpoints/${id}`,
+      "qs": {
+         "api-version": SERVICE_ENDPOINTS_API_VERSION
+      }
+   });
+
+   request(options, function (error, response, body) {
+      callback(error, JSON.parse(body));
    });
 }
 
@@ -253,9 +354,14 @@ function findDockerServiceEndpoint(account, projectId, dockerHost, token, gen, c
 
    var options = addUserAgent({
       "method": `GET`,
-      "headers": { "cache-control": `no-cache`, "authorization": `Basic ${token}` },
+      "headers": {
+         "cache-control": `no-cache`,
+         "authorization": `Basic ${token}`
+      },
       "url": `${getFullURL(account)}/${projectId}/_apis/distributedtask/serviceendpoints`,
-      "qs": { "api-version": SERVICE_ENDPOINTS_API_VERSION }
+      "qs": {
+         "api-version": SERVICE_ENDPOINTS_API_VERSION
+      }
    });
 
    request(options, function (error, response, body) {
@@ -270,10 +376,15 @@ function findDockerServiceEndpoint(account, projectId, dockerHost, token, gen, c
 
       // The i.url is returned with a trailing / so just use starts with just in case
       // the dockerHost is passed in without it
-      var endpoint = obj.value.find(function (i) { return i.url.startsWith(dockerHost); });
+      var endpoint = obj.value.find(function (i) {
+         return i.url.startsWith(dockerHost);
+      });
 
       if (endpoint === undefined) {
-         callback({ "message": `x Could not find Docker Service Endpoint`, "code": `NotFound` }, undefined);
+         callback({
+            "message": `x Could not find Docker Service Endpoint`,
+            "code": `NotFound`
+         }, undefined);
       } else {
          callback(error, endpoint);
       }
@@ -319,12 +430,18 @@ function findAzureServiceEndpoint(account, projectId, sub, token, gen, callback)
    request(options, function (error, response, body) {
       var obj = JSON.parse(body);
 
-      var endpoint = obj.value.find(function (i) { return i.data.subscriptionName === sub.name; });
+      var endpoint = obj.value.find(function (i) {
+         return i.data.subscriptionName === sub.name;
+      });
 
       if (endpoint === undefined) {
-         callback({ "message": `x Could not find Azure Service Endpoint`, "code": `NotFound` }, undefined);
+         callback({
+            "message": `x Could not find Azure Service Endpoint`,
+            "code": `NotFound`
+         }, undefined);
       } else {
-         callback(error, endpoint);
+         // Down stream we need the full endpoint so call again with the ID. This will return more data
+         getServiceEndpoint(account, projectId, endpoint.id, token, callback);
       }
    });
 }
@@ -334,14 +451,20 @@ function findAzureSub(account, subName, token, gen, callback) {
 
    var options = addUserAgent({
       method: 'GET',
-      headers: { 'cache-control': 'no-cache', 'content-type': 'application/json', 'authorization': `Basic ${token}` },
+      headers: {
+         'cache-control': 'no-cache',
+         'content-type': 'application/json',
+         'authorization': `Basic ${token}`
+      },
       url: `${getFullURL(account)}/_apis/distributedtask/serviceendpointproxy/azurermsubscriptions`
    });
 
    request(options, function (error, response, body) {
       var obj = JSON.parse(body);
 
-      var sub = obj.value.find(function (i) { return i.displayName === subName; });
+      var sub = obj.value.find(function (i) {
+         return i.displayName === subName;
+      });
 
       callback(error, sub);
    });
@@ -371,9 +494,14 @@ function findProject(account, project, token, gen, callback) {
 
    var options = addUserAgent({
       "method": `GET`,
-      "headers": { "cache-control": `no-cache`, "authorization": `Basic ${token}` },
+      "headers": {
+         "cache-control": `no-cache`,
+         "authorization": `Basic ${token}`
+      },
       "url": `${getFullURL(account)}/_apis/projects/${project}`,
-      "qs": { "api-version": PROJECT_API_VERSION }
+      "qs": {
+         "api-version": PROJECT_API_VERSION
+      }
    });
 
    request(options, function (err, res, body) {
@@ -392,13 +520,18 @@ function findProject(account, project, token, gen, callback) {
          // You get this when the site tries to send you to the
          // login page.
          gen.log.error(`x Unable to authenticate with Team Services. Check account name and personal access token.`);
-         callback({ "message": `Unable to authenticate with Team Services. Check account name and personal access token.` });
+         callback({
+            "message": `Unable to authenticate with Team Services. Check account name and personal access token.`
+         });
          return;
       }
 
       if (res.statusCode === 404) {
          // Returning a undefined project indicates it was not found
-         callback({ "message": `x Project ${project} not found`, "code": `NotFound` }, undefined);
+         callback({
+            "message": `x Project ${project} not found`,
+            "code": `NotFound`
+         }, undefined);
       } else {
          var obj = JSON.parse(body);
 
@@ -414,10 +547,14 @@ function findQueue(name, account, teamProject, token, callback) {
    var options = addUserAgent({
       "method": `GET`,
       "headers": {
-         "cache-control": `no-cache`, "authorization": `Basic ${token}`
+         "cache-control": `no-cache`,
+         "authorization": `Basic ${token}`
       },
       "url": `${getFullURL(account)}/${teamProject.id}/_apis/distributedtask/queues`,
-      "qs": { "api-version": DISTRIBUTED_TASK_API_VERSION, "queueName": name }
+      "qs": {
+         "api-version": DISTRIBUTED_TASK_API_VERSION,
+         "queueName": name
+      }
    });
 
    request(options, function (err, res, body) {
@@ -452,23 +589,31 @@ function tryFindBuild(account, teamProject, token, target, callback) {
 function findBuild(account, teamProject, token, target, callback) {
    'use strict';
 
-   var name = target === `docker` ? `${teamProject.name}-Docker-CI` : `${teamProject.name}-CI`;
+   var name = (target === `docker` || target === `dockerpaas`) ? `${teamProject.name}-Docker-CI` : `${teamProject.name}-CI`;
    var options = addUserAgent({
       "method": `GET`,
       "headers": {
-         "cache-control": `no-cache`, "authorization": `Basic ${token}`
+         "cache-control": `no-cache`,
+         "authorization": `Basic ${token}`
       },
       "url": `${getFullURL(account)}/${teamProject.id}/_apis/build/definitions`,
-      "qs": { "api-version": BUILD_API_VERSION }
+      "qs": {
+         "api-version": BUILD_API_VERSION
+      }
    });
 
    request(options, function (e, response, body) {
       var obj = JSON.parse(body);
 
-      var bld = obj.value.find(function (i) { return i.name === name; });
+      var bld = obj.value.find(function (i) {
+         return i.name === name;
+      });
 
       if (!bld) {
-         callback({ "message": `x Build ${name} not found`, "code": `NotFound` }, undefined);
+         callback({
+            "message": `x Build ${name} not found`,
+            "code": `NotFound`
+         }, undefined);
       } else {
          callback(e, bld);
       }
@@ -490,24 +635,32 @@ function tryFindRelease(args, callback) {
 function findRelease(args, callback) {
    "use strict";
 
-   var name = args.target === `docker` ? `${args.appName}-Docker-CD` : `${args.appName}-CD`;
+   var name = (args.target === `docker` || args.target === `dockerpaas`) ? `${args.appName}-Docker-CD` : `${args.appName}-CD`;
 
    var options = addUserAgent({
       "method": `GET`,
       "headers": {
-         "cache-control": `no-cache`, "authorization": `Basic ${args.token}`
+         "cache-control": `no-cache`,
+         "authorization": `Basic ${args.token}`
       },
       "url": `${getFullURL(args.account, true, true)}/${args.teamProject.name}/_apis/release/definitions`,
-      "qs": { "api-version": RELEASE_API_VERSION }
+      "qs": {
+         "api-version": RELEASE_API_VERSION
+      }
    });
 
    request(options, function (e, response, body) {
       var obj = JSON.parse(body);
 
-      var rel = obj.value.find(function (i) { return i.name === name; });
+      var rel = obj.value.find(function (i) {
+         return i.name === name;
+      });
 
       if (!rel) {
-         callback({ "message": `x Release ${name} not found`, "code": `NotFound` }, undefined);
+         callback({
+            "message": `x Release ${name} not found`,
+            "code": `NotFound`
+         }, undefined);
       } else {
          callback(e, rel);
       }
@@ -521,7 +674,11 @@ function getAzureSubs(answers) {
 
    var options = addUserAgent({
       method: 'GET',
-      headers: { 'cache-control': 'no-cache', 'content-type': 'application/json', 'authorization': `Basic ${token}` },
+      headers: {
+         'cache-control': 'no-cache',
+         'content-type': 'application/json',
+         'authorization': `Basic ${token}`
+      },
       url: `${getFullURL(answers.tfs)}/_apis/distributedtask/serviceendpointproxy/azurermsubscriptions`
    });
 
@@ -537,7 +694,9 @@ function getAzureSubs(answers) {
          var result = [];
 
          obj.value.forEach((sub) => {
-            result.push({ name: sub.displayName });
+            result.push({
+               name: sub.displayName
+            });
          });
 
          resolve(result);
@@ -553,10 +712,13 @@ function getPools(answers) {
    var options = addUserAgent({
       "method": `GET`,
       "headers": {
-         "cache-control": `no-cache`, "authorization": `Basic ${token}`
+         "cache-control": `no-cache`,
+         "authorization": `Basic ${token}`
       },
       "url": `${getFullURL(answers.tfs)}/_apis/distributedtask/pools`,
-      "qs": { "api-version": DISTRIBUTED_TASK_API_VERSION }
+      "qs": {
+         "api-version": DISTRIBUTED_TASK_API_VERSION
+      }
    });
 
    return new Promise(function (resolve, reject) {
@@ -572,21 +734,67 @@ function getPools(answers) {
    });
 }
 
-function validateInstance(input) {
-   // It was unclear if the user should provide the full URL or just 
-   // the account name so I am adding validation to help.
-   if (!input) {
-      return `You must provide a Team Services account name`;
-   }
+function isDockerHub(dockerRegistry) {
+   return dockerRegistry.toLowerCase().match(/index.docker.io/) !== null;
+}
 
-   // If you find http or visualstudio.com in the name the user most
+function extractInstance(input) {
+   // When using VSTS we only want the account name but
+   // people continue to give the entire url which will
+   // cause issues later. So check to see if the value
+   // provided contains visualstudio.com and if so extract
+   // the account name and simply return that.
+
+   // If you find visualstudio.com in the name the user most
    // likely entered the entire URL instead of just the account name
-   // so let them know.  Otherwise, just return true.
-   if (input.toLowerCase().match(/visualstudio.com|http/) === null) {
-      return true;
+   // so lets extract it.
+   if (input.toLowerCase().match(/visualstudio.com/) === null) {
+      return input;
    }
 
-   return "Only provide your account name ({account}.visualstudio.com) not the entire URL. Just the portion before .visualstudio.com.";
+   var myRegexp = /([^/]+)\.visualstudio.com/;
+   var match = myRegexp.exec(input);
+
+   return match[1];
+}
+
+function needsRegistry(answers, cmdLnInput) {
+   if (cmdLnInput !== undefined) {
+      return (answers.target === `docker` || cmdLnInput.target === `docker` || answers.target === `dockerpaas` || cmdLnInput.target === `dockerpaas`);
+   } else {
+      return (answers.target === `docker` || answers.target === `dockerpaas`);
+   }
+}
+
+function needsDockerHost(answers, cmdLnInput) {
+   if (cmdLnInput !== undefined) {
+      // If you pass in the target on the command line 
+      // answers.target will be undefined so test cmdLnInput
+      let isDocker = (answers.target === `docker` || cmdLnInput.target === `docker`);
+
+      // This will be true if the user did not select the Hosted Linux queue
+      let paasRequiresHost = (answers.target === `dockerpaas` || cmdLnInput.target === `dockerpaas`) &&
+         (answers.queue !== undefined && answers.queue.indexOf(`Linux`) === -1);
+
+      return (isDocker || paasRequiresHost);
+   } else {
+      // If you pass in the target on the command line 
+      // answers.target will be undefined so test cmdLnInput
+      let isDocker = answers.target === `docker`;
+
+      // This will be true the user did not select the Hosted Linux queue
+      let paasRequiresHost = answers.target === `dockerpaas` && answers.queue.indexOf(`Linux`) === -1;
+
+      return (isDocker || paasRequiresHost);
+   }
+}
+
+function isPaaS(answers, cmdLnInput) {
+   if (cmdLnInput !== undefined) {
+      return (answers.target === `paas` || cmdLnInput.target === `paas` || answers.target === `dockerpaas` || cmdLnInput.target === `dockerpaas`);
+   } else {
+      return (answers.target === `paas` || answers.target === `dockerpaas`);
+   }
 }
 
 function isVSTS(instance) {
@@ -626,6 +834,7 @@ module.exports = {
    // it.
 
    isVSTS: isVSTS,
+   isPaaS: isPaaS,
    getPools: getPools,
    tokenize: tokenize,
    encodePat: encodePat,
@@ -633,33 +842,38 @@ module.exports = {
    findBuild: findBuild,
    getFullURL: getFullURL,
    getTargets: getTargets,
-   getAppTypes: getAppTypes,  
+   getAppTypes: getAppTypes,
    checkStatus: checkStatus,
    findProject: findProject,
    findRelease: findRelease,
    validateTFS: validateTFS,
+   isDockerHub: isDockerHub,
    getAzureSubs: getAzureSubs,
    findAzureSub: findAzureSub,
    getPATPrompt: getPATPrompt,
    tryFindBuild: tryFindBuild,
    addUserAgent: addUserAgent,
    getUserAgent: getUserAgent,
+   needsRegistry: needsRegistry,
    tryFindRelease: tryFindRelease,
    reconcileValue: reconcileValue,
    tryFindProject: tryFindProject,
    validateGroupID: validateGroupID,
+   extractInstance: extractInstance,
+   needsDockerHost: needsDockerHost,
    validateAzureSub: validateAzureSub,
-   validateInstance: validateInstance,
    getInstancePrompt: getInstancePrompt,
+   getImageNamespace: getImageNamespace,
    validateDockerHost: validateDockerHost,
    validateAzureSubID: validateAzureSubID,
    validatePortMapping: validatePortMapping,
    validateDockerHubID: validateDockerHubID,
    getDefaultPortMapping: getDefaultPortMapping,
    validateAzureTenantID: validateAzureTenantID,
-   validateDockerHubEmail: validateDockerHubEmail,
+   validateDockerRegistry: validateDockerRegistry,
    validateApplicationName: validateApplicationName,
    findAzureServiceEndpoint: findAzureServiceEndpoint,
+   getDockerRegisteryServer: getDockerRegisteryServer,
    findDockerServiceEndpoint: findDockerServiceEndpoint,
    validateDockerHubPassword: validateDockerHubPassword,
    validateServicePrincipalID: validateServicePrincipalID,

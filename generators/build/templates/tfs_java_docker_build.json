@@ -6,7 +6,23 @@
    "queue": {
       "id": "{{QueueId}}"
    },
-   "build": [
+   "build": [{
+         "enabled": true,
+         "continueOnError": false,
+         "alwaysRun": false,
+         "displayName": "npm install bower",
+         "timeoutInMinutes": 0,
+         "task": {
+            "id": "fe47e961-9fa8-4106-8639-368c022d43ad",
+            "versionSpec": "0.*",
+            "definitionType": "task"
+         },
+         "inputs": {
+            "cwd": "",
+            "command": "install",
+            "arguments": "bower --allow-root"
+         }
+      },
       {
          "enabled": true,
          "continueOnError": false,
@@ -67,27 +83,61 @@
          "enabled": true,
          "continueOnError": false,
          "alwaysRun": false,
-         "displayName": "Extract war file",
+         "displayName": "Build an image",
          "timeoutInMinutes": 0,
          "task": {
-            "id": "e213ff0f-5d5c-4791-802d-52ea3e7be1f1",
+            "id": "b93c4522-5bea-4118-97ae-2b560628a157",
             "versionSpec": "*",
             "definitionType": "task"
          },
          "inputs": {
-            "scriptType": "inlineScript",
-            "scriptName": "",
-            "arguments": "-zipFile \"$(Build.SourcesDirectory)/target/{{Project}}.war\" -baseFolder \"$(Build.SourcesDirectory)/temp/webapps/ROOT\"",
-            "inlineScript": "Param( [string]$zipFile,  [string]$baseFolder)\n[Reflection.Assembly]::LoadWithPartialName(\"System.IO.Compression.FileSystem\")\n[IO.Compression.ZipFile]::ExtractToDirectory($zipFile, $baseFolder)",
-            "workingFolder": "",
-            "failOnStandardError": "true"
+            "dockerHostEndpoint": "{{dockerHostEndpoint}}",
+            "dockerRegistryEndpoint": "{{dockerRegistryEndpoint}}",
+            "action": "Build an image",
+            "dockerFile": "dockerfile",
+            "imageName": "{{dockerRegistryId}}/{{ProjectLowerCase}}:$(Build.BuildId)",
+            "context": "$(Build.SourcesDirectory)",
+            "containerName": "",
+            "ports": "",
+            "envVars": "",
+            "removeImageAfterPush": "false",
+            "customCommand": "",
+            "containerCommand": "",
+            "cwd": ""
          }
       },
       {
          "enabled": true,
          "continueOnError": false,
          "alwaysRun": false,
-         "displayName": "Copy parameters.xml",
+         "displayName": "Push an image",
+         "timeoutInMinutes": 0,
+         "task": {
+            "id": "b93c4522-5bea-4118-97ae-2b560628a157",
+            "versionSpec": "*",
+            "definitionType": "task"
+         },
+         "inputs": {
+            "dockerHostEndpoint": "{{dockerHostEndpoint}}",
+            "dockerRegistryEndpoint": "{{dockerRegistryEndpoint}}",
+            "action": "Push an image",
+            "dockerFile": "**/Dockerfile",
+            "imageName": "{{dockerRegistryId}}/{{ProjectLowerCase}}:$(Build.BuildId)",
+            "context": "$(Build.StagingDirectory)",
+            "containerName": "",
+            "ports": "",
+            "envVars": "",
+            "removeImageAfterPush": "false",
+            "customCommand": "",
+            "containerCommand": "",
+            "cwd": "$(System.DefaultWorkingDirectory)"
+         }
+      },
+      {
+         "enabled": true,
+         "continueOnError": false,
+         "alwaysRun": false,
+         "displayName": "Copy Files",
          "timeoutInMinutes": 0,
          "task": {
             "id": "5bfb729a-a7c8-4a78-a7c3-8d717bb7c13c",
@@ -95,9 +145,9 @@
             "definitionType": "task"
          },
          "inputs": {
-            "SourceFolder": "templates/",
-            "Contents": "parameters.xml",
-            "TargetFolder": "$(Build.SourcesDirectory)/temp/",
+            "SourceFolder": "",
+            "Contents": "templates/*.*",
+            "TargetFolder": "$(Build.StagingDirectory)/drop",
             "CleanTargetFolder": "false",
             "OverWrite": "false"
          }
@@ -106,53 +156,30 @@
          "enabled": true,
          "continueOnError": false,
          "alwaysRun": false,
-         "displayName": "Zip as MSDeploy",
+         "displayName": "Publish Artifact: drop",
          "timeoutInMinutes": 0,
          "task": {
-            "id": "e213ff0f-5d5c-4791-802d-52ea3e7be1f1",
+            "id": "2ff763a7-ce83-4e1f-bc89-0ae63477cebe",
             "versionSpec": "*",
             "definitionType": "task"
          },
          "inputs": {
-            "scriptType": "inlineScript",
-            "scriptName": "",
-            "arguments": "-zipRoot \"$(Build.SourcesDirectory)/temp/\" -target \"$(Build.SourcesDirectory)/target/{{Project}}.zip\"",
-            "inlineScript": "Param([string]$target, [string]$zipRoot)\n[Reflection.Assembly]::LoadWithPartialName(\"System.IO.Compression.FileSystem\")\n[IO.Compression.ZipFile]::CreateFromDirectory($zipRoot, $target)",
-            "workingFolder": "",
-            "failOnStandardError": "true"
-         }
-      },
-      {
-         "enabled": true,
-         "continueOnError": false,
-         "alwaysRun": false,
-         "displayName": "Copy Publish Artifact: drop",
-         "timeoutInMinutes": 0,
-         "task": {
-            "id": "1d341bb0-2106-458c-8422-d00bcea6512a",
-            "versionSpec": "*",
-            "definitionType": "task"
-         },
-         "inputs": {
-            "CopyRoot": "",
-            "Contents": "**/*.war\n**/*.zip\n**/templates/*.*",
+            "PathtoPublish": "$(Build.StagingDirectory)/drop",
             "ArtifactName": "drop",
             "ArtifactType": "Container",
             "TargetPath": "\\\\my\\share\\$(Build.DefinitionName)\\$(Build.BuildNumber)"
          }
       }
    ],
-   "triggers": [
-      {
-         "branchFilters": [
-            "+refs/heads/master"
-         ],
-         "pathFilters": [],
-         "batchChanges": false,
-         "maxConcurrentBuildsPerBranch": 1,
-         "triggerType": "continuousIntegration"
-      }
-   ],
+   "triggers": [{
+      "branchFilters": [
+         "+refs/heads/master"
+      ],
+      "pathFilters": [],
+      "batchChanges": false,
+      "maxConcurrentBuildsPerBranch": 1,
+      "triggerType": "continuousIntegration"
+   }],
    "variables": {
       "system.debug": {
          "value": "false",
@@ -176,7 +203,7 @@
       "name": "{{Project}}",
       "url": "{{TFS}}/_git/{{Project}}",
       "defaultBranch": "refs/heads/master",
-      "clean": "true",
+      "clean": "false",
       "checkoutSubmodules": false
    }
 }

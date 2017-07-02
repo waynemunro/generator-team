@@ -10,51 +10,52 @@ function run(args, gen, done) {
    'use strict';
 
    var queueId = 0;
-   var teamProject = {};
-   var dockerEndpoint = {};
-   var dockerRegistryEndpoint = {};
+   var teamProject;
+   var dockerEndpoint;
+   var dockerRegistryEndpoint;
    var token = util.encodePat(args.pat);
 
    async.series([
-      function (mainSeries) {
-         util.findProject(args.tfs, args.project, token, gen, function (err, tp) {
-            teamProject = tp;
-            mainSeries(err, tp);
-         });
-      },
-      function (mainSeries) {
-         async.parallel([
-            function (inParallel) {
-               util.findQueue(args.queue, args.tfs, teamProject, token, function (err, id) {
-                  queueId = id;
-                  inParallel(err, id);
-               });
-            },
-            function (inParallel) {
-               if (args.target === `docker`) {
-                  util.findDockerServiceEndpoint(args.tfs, teamProject.id, args.dockerHost, token, gen, function (err, ep) {
-                     dockerEndpoint = ep;
-                     inParallel(err, dockerEndpoint);
+         function (mainSeries) {
+            util.findProject(args.tfs, args.project, token, gen, function (err, tp) {
+               teamProject = tp;
+               mainSeries(err, tp);
+            });
+         },
+         function (mainSeries) {
+            async.parallel([
+               function (inParallel) {
+                  util.findQueue(args.queue, args.tfs, teamProject, token, function (err, id) {
+                     queueId = id;
+                     inParallel(err, id);
                   });
-               } else {
-                  inParallel(null, undefined);
+               },
+               function (inParallel) {
+                  if (util.needsDockerHost(args)) {
+                     util.findDockerServiceEndpoint(args.tfs, teamProject.id, args.dockerHost, token, gen, function (err, ep) {
+                        dockerEndpoint = ep;
+                        inParallel(err, dockerEndpoint);
+                     });
+                  } else {
+                     inParallel(null, undefined);
+                  }
+               },
+               function (inParallel) {
+                  if (util.needsRegistry(args)) {
+                     util.findDockerRegistryServiceEndpoint(args.tfs, teamProject.id, args.dockerRegistry, token, function (err, ep) {
+                        dockerRegistryEndpoint = ep;
+                        inParallel(err, dockerRegistryEndpoint);
+                     });
+                  } else {
+                     inParallel(null, undefined);
+                  }
                }
-            },
-            function (inParallel) {
-               if (args.target === `docker`) {
-                  util.findDockerRegistryServiceEndpoint(args.tfs, teamProject.id, args.dockerRegistry, token, function (err, ep) {
-                     dockerRegistryEndpoint = ep;
-                     inParallel(err, dockerRegistryEndpoint);
-                  });
-               } else {
-                  inParallel(null, undefined);
-               }
-            }
-         ], mainSeries);
-      },
-      function (mainSeries) {
-         findOrCreateBuild(args.tfs, teamProject, token, queueId, dockerEndpoint, dockerRegistryEndpoint, args.dockerRegistryId, args.buildJson, args.target, gen, mainSeries);
-      }],
+            ], mainSeries);
+         },
+         function (mainSeries) {
+            findOrCreateBuild(args.tfs, teamProject, token, queueId, dockerEndpoint, dockerRegistryEndpoint, args.dockerRegistryId, args.buildJson, args.target, gen, mainSeries);
+         }
+      ],
       function (err, results) {
          // This is just for test and will be undefined during normal use
          if (done) {
@@ -97,16 +98,20 @@ function createBuild(account, teamProject, token, queueId,
 
    gen.log('+ Creating CI build definition');
 
+   // Qualify the image name with the dockerRegistryId for docker hub
+   // or the server name for other registries. 
+   let dockerNamespace = util.getImageNamespace(dockerRegistryId, dockerRegistryEndpoint);
+
    // Load the template and replace values.
    var contents = fs.readFileSync(filename, 'utf8');
    var tokens = {
-      '{{BuildDefName}}': target === 'docker' ? `${teamProject.name}-Docker-CI` : `${teamProject.name}-CI`,
+      '{{BuildDefName}}': (target === `docker` || target === `dockerpaas`) ? `${teamProject.name}-Docker-CI` : `${teamProject.name}-CI`,
       '{{TFS}}': account,
       '{{Project}}': teamProject.name,
       '{{QueueId}}': queueId,
-      '{{dockerHostEndpoint}}': dockerHostEndpoint ? dockerHostEndpoint.id : null,
-      '{{dockerRegistryEndpoint}}': dockerRegistryEndpoint ? dockerRegistryEndpoint.id : null,
-      '{{dockerRegistryId}}': dockerRegistryId ? dockerRegistryId.toLowerCase() : null,
+      '{{dockerHostEndpoint}}': dockerHostEndpoint ? dockerHostEndpoint.id : ``,
+      '{{dockerRegistryEndpoint}}': dockerRegistryEndpoint ? dockerRegistryEndpoint.id : ``,
+      '{{dockerRegistryId}}': dockerNamespace,
       '{{ProjectLowerCase}}': teamProject.name.toLowerCase()
    };
 
@@ -117,10 +122,16 @@ function createBuild(account, teamProject, token, queueId,
 
    var options = util.addUserAgent({
       method: 'POST',
-      headers: { 'cache-control': 'no-cache', 'content-type': 'application/json', 'authorization': `Basic ${token}` },
+      headers: {
+         'cache-control': 'no-cache',
+         'content-type': 'application/json',
+         'authorization': `Basic ${token}`
+      },
       json: true,
       url: `${util.getFullURL(account)}/${teamProject.id}/_apis/build/definitions`,
-      qs: { 'api-version': BUILD_API_VERSION },
+      qs: {
+         'api-version': BUILD_API_VERSION
+      },
       body: payload
    });
 
@@ -138,32 +149,18 @@ function createBuild(account, teamProject, token, queueId,
 
 function getBuild(args) {
    var build = ``;
-
-   if (args.type === `asp`) {
-      if (args.target === `docker`) {
-         if (util.isVSTS(args.tfs)) {
-            build = `vsts_asp_docker_build.json`;
-         } else {
-            build = `tfs_asp_docker_build.json`;
-         }
+   
+   if (args.target === `docker` || args.target === `dockerpaas`) {
+      if (util.isVSTS(args.tfs)) {
+         build = `vsts_${args.type}_docker_build.json`;
       } else {
-         if (util.isVSTS(args.tfs)) {
-            build = `vsts_asp_build.json`;
-         } else {
-            build = `tfs_asp_build.json`;
-         }
-      }
-   } else if (args.type === `node`) {
-      if (args.target === `docker`) {
-         build = `node_docker_build.json`;
-      } else {
-         build = `node_build.json`;
+         build = `tfs_${args.type}_docker_build.json`;
       }
    } else {
-      if (args.target === `docker`) {
-         build = `java_docker_build.json`;
+      if (util.isVSTS(args.tfs)) {
+         build = `vsts_${args.type}_build.json`;
       } else {
-         build = `java_build.json`;
+         build = `tfs_${args.type}_build.json`;
       }
    }
 

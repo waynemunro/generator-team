@@ -3,9 +3,12 @@ const path = require(`path`);
 const sinon = require(`sinon`);
 const assert = require(`assert`);
 const helpers = require(`yeoman-test`);
+const sinonTest = require(`sinon-test`);
 const proxyquire = require(`proxyquire`);
 const build = require(`../generators/build/app`);
 const util = require(`../generators/app/utility`);
+
+sinon.test = sinonTest.configureTest(sinon);
 
 describe(`build:index`, function () {
    it(`test prompts asp:paas should not return error`, () => {
@@ -21,6 +24,45 @@ describe(`build:index`, function () {
       return helpers.run(path.join(__dirname, `../generators/build/index`))
          .withPrompts({
             type: `asp`,
+            applicationName: `aspDemo`,
+            target: `paas`,
+            tfs: `http://localhost:8080/tfs/DefaultCollection`,
+            queue: `Default`,
+            pat: `token`
+         })
+         .on(`error`, e => {
+            cleanUp();
+            assert.fail(e);
+         })
+         .on(`ready`, generator => {
+            // This is called right before `generator.run()` is called
+            sinon.stub(util, `getPools`);
+            sinon.stub(util, `findQueue`).callsArgWith(4, null, 1);
+            sinon.stub(util, `findDockerServiceEndpoint`).callsArgWith(5, null, null);
+            sinon.stub(util, `tryFindBuild`).callsArgWith(4, null, { value: "I`m a build." });
+            sinon.stub(util, `findDockerRegistryServiceEndpoint`).callsArgWith(4, null, null);
+            sinon.stub(util, `findProject`).callsArgWith(4, null, { value: "TeamProject", id: 1 });
+         })
+         .on(`end`, () => {
+            // Using the yeoman helpers and sinon.test did not play nice
+            // so clean up your stubs
+            cleanUp();
+         });
+   });
+
+   it(`test prompts aspFull:paas should not return error`, () => {
+      let cleanUp = () => {
+         util.getPools.restore();
+         util.findQueue.restore();
+         util.findProject.restore();
+         util.tryFindBuild.restore();
+         util.findDockerServiceEndpoint.restore();
+         util.findDockerRegistryServiceEndpoint.restore();
+      };
+
+      return helpers.run(path.join(__dirname, `../generators/build/index`))
+         .withPrompts({
+            type: `aspFull`,
             applicationName: `aspDemo`,
             target: `paas`,
             tfs: `http://localhost:8080/tfs/DefaultCollection`,
@@ -406,6 +448,17 @@ describe(`build:app`, () => {
       assert.equal(expected, actual);
    });
 
+   it(`getBuild aspFull vsts pass`, () => {
+      // Arrange 
+      let expected = `vsts_aspFull_build.json`;
+
+      // Act
+      let actual = build.getBuild({ type: `aspFull`, target: `paas`, tfs: `vsts` });
+
+      // Assert
+      assert.equal(expected, actual);
+   });
+
    it(`getBuild asp tfs docker`, () => {
       // Arrange 
       let expected = `tfs_asp_docker_build.json`;
@@ -423,6 +476,138 @@ describe(`build:app`, () => {
 
       // Act
       let actual = build.getBuild({ type: `asp`, target: `docker`, tfs: `vsts` });
+
+      // Assert
+      assert.equal(expected, actual);
+   });
+
+   it(`getBuild asp tfs dockerpaas`, () => {
+      // Arrange 
+      let expected = `tfs_asp_docker_build.json`;
+
+      // Act
+      let actual = build.getBuild({ type: `asp`, target: `dockerpaas`, tfs: `http://tfs:8080/tfs/DefaultCollection` });
+
+      // Assert
+      assert.equal(expected, actual);
+   });
+
+   it(`getBuild asp vsts dockerpaas`, () => {
+      // Arrange 
+      let expected = `vsts_asp_docker_build.json`;
+
+      // Act
+      let actual = build.getBuild({ type: `asp`, target: `dockerpaas`, tfs: `vsts` });
+
+      // Assert
+      assert.equal(expected, actual);
+   });
+
+   it(`getBuild java tfs dockerpaas`, () => {
+      // Arrange 
+      let expected = `tfs_java_docker_build.json`;
+
+      // Act
+      let actual = build.getBuild({ type: `java`, target: `dockerpaas`, tfs: `http://tfs:8080/tfs/DefaultCollection` });
+
+      // Assert
+      assert.equal(expected, actual);
+   });
+
+   it(`getBuild java vsts dockerpaas`, () => {
+      // Arrange 
+      let expected = `vsts_java_docker_build.json`;
+
+      // Act
+      let actual = build.getBuild({ type: `java`, target: `dockerpaas`, tfs: `vsts` });
+
+      // Assert
+      assert.equal(expected, actual);
+   });
+
+   it(`getBuild java vsts docker`, () => {
+      // Arrange 
+      let expected = `vsts_java_docker_build.json`;
+
+      // Act
+      let actual = build.getBuild({ type: `java`, target: `docker`, tfs: `vsts` });
+
+      // Assert
+      assert.equal(expected, actual);
+   });
+
+   it(`getBuild java vsts pass`, () => {
+      // Arrange 
+      let expected = `vsts_java_build.json`;
+
+      // Act
+      let actual = build.getBuild({ type: `java`, target: `paas`, tfs: `vsts` });
+
+      // Assert
+      assert.equal(expected, actual);
+   });
+
+   it(`getBuild node vsts dockerpaas`, () => {
+      // Arrange 
+      let expected = `vsts_node_docker_build.json`;
+
+      // Act
+      let actual = build.getBuild({ type: `node`, target: `dockerpaas`, tfs: `vsts`, queue: `Hosted Linux Preview` });
+
+      // Assert
+      assert.equal(expected, actual);
+   });
+
+   it(`getBuild node vsts docker`, () => {
+      // Arrange 
+      let expected = `vsts_node_docker_build.json`;
+
+      // Act
+      let actual = build.getBuild({ type: `node`, target: `docker`, tfs: `vsts` });
+
+      // Assert
+      assert.equal(expected, actual);
+   });
+
+   it(`getBuild node vsts paas`, () => {
+      // Arrange 
+      let expected = `vsts_node_build.json`;
+
+      // Act
+      let actual = build.getBuild({ type: `node`, target: `paas`, tfs: `vsts` });
+
+      // Assert
+      assert.equal(expected, actual);
+   });
+
+   it(`getBuild node tfs dockerpaas`, () => {
+      // Arrange 
+      let expected = `tfs_node_docker_build.json`;
+
+      // Act
+      let actual = build.getBuild({ type: `node`, target: `dockerpaas`, tfs: `http://tfs:8080/tfs/DefaultCollection` });
+
+      // Assert
+      assert.equal(expected, actual);
+   });
+
+   it(`getBuild node tfs docker`, () => {
+      // Arrange 
+      let expected = `tfs_node_docker_build.json`;
+
+      // Act
+      let actual = build.getBuild({ type: `node`, target: `docker`, tfs: `http://tfs:8080/tfs/DefaultCollection` });
+
+      // Assert
+      assert.equal(expected, actual);
+   });
+
+   it(`getBuild node tfs paas`, () => {
+      // Arrange 
+      let expected = `tfs_node_build.json`;
+
+      // Act
+      let actual = build.getBuild({ type: `node`, target: `paas`, tfs: `http://tfs:8080/tfs/DefaultCollection` });
 
       // Assert
       assert.equal(expected, actual);
@@ -544,7 +729,9 @@ describe(`build:app`, () => {
 
       // Act
       proxyApp.findOrCreateBuild(`http://localhost:8080/tfs/DefaultCollection`, { name: `TeamProject`, id: 1 },
-         `token`, 1, `dockerHostEndpoint`, `dockerRegistryEndpoint`, `dockerRegistryId`, `build.json`, `docker`, logger, function (e, bld) {
+         `token`, 1, `dockerHostEndpoint`,
+         { name: `dockerRegistryEndpoint`, url: ``, authorization: { parameters: { registry: `` } } },
+         `dockerRegistryId`, `build.json`, `docker`, logger, function (e, bld) {
             assert.equal(e, null);
             assert.equal(bld.name, `build`);
 

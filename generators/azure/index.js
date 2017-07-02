@@ -1,5 +1,7 @@
 const app = require('./app.js');
+const args = require(`../app/args`);
 const util = require(`../app/utility`);
+const prompts = require(`../app/prompt`);
 const generators = require('yeoman-generator');
 
 function construct() {
@@ -7,111 +9,39 @@ function construct() {
    generators.Base.apply(this, arguments);
 
    // Order is important 
-   this.argument(`applicationName`, { required: false, desc: `name of the application` });
-   this.argument(`tfs`, { required: false, desc: `full tfs URL including collection or Team Services account name` });
-   this.argument(`azureSub`, { required: false, desc: `Azure Subscription name` });
-   this.argument(`azureSubId`, { required: false, desc: `Azure Subscription ID` });
-   this.argument(`tenantId`, { required: false, desc: `Azure Tenant ID` });
-   this.argument(`servicePrincipalId`, { required: false, desc: `Azure Service Principal Id` });
-   this.argument(`servicePrincipalKey`, { required: false, desc: `Azure Service Principal Key` });
-   this.argument(`pat`, { required: false, desc: `Personal Access Token to TFS/VSTS` });
+   args.applicationName(this);
+   args.tfs(this);
+   args.azureSub(this);
+   args.azureSubId(this);
+   args.tenantId(this);
+   args.servicePrincipalId(this);
+   args.servicePrincipalKey(this);
+   args.pat(this);
 }
 
 function input() {
-    // Collect any missing data from the user.
-    // This gives me access to the generator in the
-    // when callbacks of prompt
-    let cmdLnInput = this;
+   // Collect any missing data from the user.
+   // This gives me access to the generator in the
+   // when callbacks of prompt
+   let cmdLnInput = this;
 
-   return this.prompt([{
-      type: `input`,
-      name: `tfs`,
-      store: true,
-      message: `What is your TFS URL including collection\n  i.e. http://tfs:8080/tfs/DefaultCollection?`,
-      validate: util.validateTFS,
-      when: function () {
-         return cmdLnInput.tfs === undefined;
-      }
-   }, {
-      type: `password`,
-      name: `pat`,
-      store: false,
-      message: `What is your TFS Access Token?`,
-      validate: util.validatePersonalAccessToken,
-      when: function () {
-         return cmdLnInput.pat === undefined;
-      }
-   }, {
-      type: `input`,
-      name: `applicationName`,
-      store: true,
-      message: `What is the name of your application?`,
-      validate: util.validateApplicationName,
-      when: function () {
-         return cmdLnInput.applicationName === undefined;
-      }
-   }, {
-      type: `input`,
-      name: `azureSub`,
-      store: true,
-      message: `What is your Azure subscription name?`,
-      validate: util.validateAzureSub,
-      when: function (a) {
-         return cmdLnInput.azureSub === undefined && !util.isVSTS(a.tfs);
-      }
-   }, {
-      type: `list`,
-      name: `azureSub`,
-      store: true,
-      message: `Which Azure subscription would you like to use?`,
-      choices: util.getAzureSubs,
-      validate: util.validateAzureSub,
-      when: function (a) {
-         var result = cmdLnInput.azureSub === undefined && util.isVSTS(a.tfs);
+   // When this generator is called alone as in team:azure
+   // we have to make sure the prompts below realize they
+   // need to get a subscription. If we don't setup everything
+   // right now the user will not be asked for a subscription.
+   cmdLnInput.target = `paas`;
 
-         if (result) {
-            cmdLnInput.log(`  Getting Azure subscriptions...`);
-         }
-
-         return result;
-      }
-   }, {
-      type: `input`,
-      name: `azureSubId`,
-      store: true,
-      message: `What is your Azure subscription ID?`,
-      validate: util.validateAzureSubID,
-      when: function () {
-         return cmdLnInput.azureSubId === undefined;
-      }
-   }, {
-      type: `input`,
-      name: `tenantId`,
-      store: true,
-      message: `What is your Azure Tenant ID?`,
-      validate: util.validateAzureTenantID,
-      when: function () {
-         return cmdLnInput.tenantId === undefined;
-      }
-   }, {
-      type: `input`,
-      name: `servicePrincipalId`,
-      store: true,
-      message: `What is your Service Principal ID?`,
-      validate: util.validateServicePrincipalID,
-      when: function () {
-         return cmdLnInput.servicePrincipalId === undefined;
-      }
-   }, {
-      type: `password`,
-      name: `servicePrincipalKey`,
-      store: false,
-      message: `What is your Service Principal Key?`,
-      validate: util.validateServicePrincipalKey,
-      when: function () {
-         return cmdLnInput.servicePrincipalKey === undefined;
-      }
-   }]).then(function (a) {
+   return this.prompt([
+      prompts.tfs(this),
+      prompts.pat(this),
+      prompts.applicationName(this),
+      prompts.azureSubInput(this),
+      prompts.azureSubList(this),
+      prompts.azureSubId(this),
+      prompts.tenantId(this),
+      prompts.servicePrincipalId(this),
+      prompts.servicePrincipalKey(this),
+   ]).then(function (a) {
       // Transfer answers to local object for use in the rest of the generator
       this.pat = util.reconcileValue(a.pat, cmdLnInput.pat);
       this.tfs = util.reconcileValue(a.tfs, cmdLnInput.tfs);
@@ -146,7 +76,7 @@ function createServiceEndpoint() {
 module.exports = generators.Base.extend({
    // The name `constructor` is important here
    constructor: construct,
-    
+
    // 2. Where you prompt users for options (where you'd call this.prompt())
    prompting: input,
 

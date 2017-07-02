@@ -33,16 +33,17 @@ describe(`team:asp docker`, () => {
          `aspUnitTest/README.md`,
          `aspUnitTest/.gitignore`,
          `aspUnitTest/bower.json`,
-         `aspUnitTest/global.json`,
+         `aspUnitTest/aspUnitTest.sln`,
+         `aspUnitTest/src/aspUnitTest/aspUnitTest.csproj`,
          `aspUnitTest/src/aspUnitTest/web.config`,
          `aspUnitTest/src/aspUnitTest/Dockerfile`,
-         `aspUnitTest/src/aspUnitTest/project.json`,
-         `aspUnitTest/src/aspUnitTest/appsettings.json`
+         `aspUnitTest/src/aspUnitTest/appsettings.json`,
+         `aspUnitTest/test/aspUnitTest.Tests/aspUnitTest.Tests.csproj`
       ]);
 
       assert.fileContent(`aspUnitTest/bower.json`, `"name": "aspunittest"`);
       assert.fileContent(`aspUnitTest/src/aspUnitTest/Dockerfile`, `ENTRYPOINT dotnet aspUnitTest.dll`);
-      assert.fileContent(`aspUnitTest/src/aspUnitTest/project.json`, `"defaultNamespace": "aspUnitTest"`);
+      assert.fileContent(`aspUnitTest/src/aspUnitTest/aspUnitTest.csproj`, `<AssemblyName>aspUnitTest</AssemblyName>`);      
    });
 });
 
@@ -76,14 +77,15 @@ describe(`team:asp paas`, () => {
       assert.file([
          `.bowerrc`,
          `README.md`,
+         `aspUnitTest.sln`,
          `.gitignore`,
          `./bower.json`,
-         `./global.json`,
          `./templates/website.json`,
          `./templates/parameters.xml`,
          `./src/aspUnitTest/web.config`,
          `./src/aspUnitTest/Dockerfile`,
-         `./src/aspUnitTest/project.json`,
+         `./src/aspUnitTest/aspUnitTest.csproj`,
+         `./test/aspUnitTest.Tests/aspUnitTest.Tests.csproj`,
          `./src/aspUnitTest/appsettings.json`,
          `./templates/website.parameters.json`
       ]);
@@ -91,6 +93,6 @@ describe(`team:asp paas`, () => {
       assert.fileContent(`./bower.json`, `"name": "aspunittest"`);
       assert.fileContent(`./templates/website.json`, `"name": "appsettings"`);
       assert.fileContent(`./src/aspUnitTest/Dockerfile`, `ENTRYPOINT dotnet aspUnitTest.dll`);
-      assert.fileContent(`./src/aspUnitTest/project.json`, `"defaultNamespace": "aspUnitTest"`);
+      assert.fileContent(`./src/aspUnitTest/aspUnitTest.csproj`, `<AssemblyName>aspUnitTest</AssemblyName>`);
    });
 });

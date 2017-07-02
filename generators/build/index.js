@@ -1,7 +1,9 @@
 const url = require(`url`);
 const path = require(`path`);
 const app = require(`./app`);
+const args = require(`../app/args`);
 const util = require(`../app/utility`);
+const prompts = require(`../app/prompt`);
 const generators = require(`yeoman-generator`);
 
 function construct() {
@@ -9,14 +11,15 @@ function construct() {
    generators.Base.apply(this, arguments);
 
    // Order is important 
-   this.argument(`type`, { required: false, desc: `project type to create (asp, node or java)` });
-   this.argument(`applicationName`, { required: false, desc: `name of the application` });
-   this.argument(`tfs`, { required: false, desc: `full tfs URL including collection or Team Services account name` });
-   this.argument(`queue`, { required: false, desc: `agent queue name to use` });
-   this.argument(`target`, { required: false, desc: `docker or Azure app service` });
-   this.argument(`dockerHost`, { required: false, desc: `Docker host url including port` });
-   this.argument(`dockerRegistryId`, { required: false, desc: `ID for Docker repository` });
-   this.argument(`pat`, { required: false, desc: `Personal Access Token to TFS/VSTS` });
+   args.applicationType(this);
+   args.applicationName(this);
+   args.tfs(this);
+   args.queue(this);
+   args.target(this);
+   args.dockerHost(this);
+   args.dockerRegistry(this);
+   args.dockerRegistryId(this);
+   args.pat(this);
 }
 
 // Collect any missing data from the user.
@@ -26,88 +29,17 @@ function input() {
    // when callbacks of prompt
    let cmdLnInput = this;
 
-   return this.prompt([{
-      type: `input`,
-      name: `tfs`,
-      store: true,
-      message: util.getInstancePrompt,
-      validate: util.validateTFS,
-      when: answers => {
-         return cmdLnInput.tfs === undefined;
-      }
-   }, {
-      type: `password`,
-      name: `pat`,
-      store: false,
-      message: util.getPATPrompt,
-      validate: util.validatePersonalAccessToken,
-      when: answers => {
-         return cmdLnInput.pat === undefined;
-      }
-   }, {
-      type: `list`,
-      name: `queue`,
-      store: true,
-      message: `What agent queue would you like to use?`,
-      default: `Default`,
-      choices: util.getPools,
-      when: answers => {
-         var result = cmdLnInput.queue === undefined;
-
-         if (result) {
-            cmdLnInput.log(`  Getting Agent Queues...`);
-         }
-
-         return result;
-      }
-   }, {
-      type: `list`,
-      name: `type`,
-      store: true,
-      message: `What type of application do you want to create?`,
-      choices: util.getAppTypes,
-      when: function () {
-         return cmdLnInput.type === undefined;
-      }
-   }, {
-      type: `input`,
-      name: `applicationName`,
-      store: true,
-      message: `What is the name of your application?`,
-      validate: util.validateApplicationName,
-      when: function () {
-         return cmdLnInput.applicationName === undefined;
-      }
-   }, {
-      type: `list`,
-      name: `target`,
-      store: true,
-      message: `Where would you like to deploy?`,
-      choices: util.getTargets,
-      when: function () {
-         return cmdLnInput.target === undefined;
-      }
-   }, {
-      type: `input`,
-      name: `dockerHost`,
-      store: true,
-      message: `What is your Docker host url and port (tcp://host:2376)?`,
-      validate: util.validateDockerHost,
-      when: function (answers) {
-         // If you pass in the target on the command line 
-         // answers.target will be undefined so test cmdLnInput
-         return (answers.target === `docker` || cmdLnInput.target === `docker`) && cmdLnInput.dockerHost === undefined;
-      }
-   }, {
-      type: `input`,
-      name: `dockerRegistryId`,
-      store: true,
-      message: `What is your Docker Hub ID (case sensitive)?`,
-      validate: util.validateDockerHubID,
-      when: function (answers) {
-         return (answers.target === `docker` || cmdLnInput.target === `docker`) && cmdLnInput.dockerRegistryId === undefined;
-      }
-   }]).then(function (answers) {
+   return this.prompt([
+      prompts.tfs(this),
+      prompts.pat(this),
+      prompts.queue(this),
+      prompts.applicationType(this),
+      prompts.applicationName(this),
+      prompts.target(this),
+      prompts.dockerHost(this),
+      prompts.dockerRegistry(this),
+      prompts.dockerRegistryUsername(this)
+   ]).then(function (answers) {
       // Transfer answers (a) to global object (cmdLnInput) for use in the rest
       // of the generator
       // If the gave you a answer from the prompt use it. If not check the 
@@ -119,6 +51,7 @@ function input() {
       this.queue = util.reconcileValue(answers.queue, cmdLnInput.queue);
       this.target = util.reconcileValue(answers.target, cmdLnInput.target);
       this.dockerHost = util.reconcileValue(answers.dockerHost, cmdLnInput.dockerHost, ``);
+      this.dockerRegistry = util.reconcileValue(answers.dockerRegistry, cmdLnInput.dockerRegistry, ``);
       this.applicationName = util.reconcileValue(answers.applicationName, cmdLnInput.applicationName, ``);
       this.dockerRegistryId = util.reconcileValue(answers.dockerRegistryId, cmdLnInput.dockerRegistryId, ``);
    }.bind(this));
@@ -140,13 +73,9 @@ function configureBuild() {
       project: this.applicationName
    };
 
-   if (this.target === `docker`) {
-      // We only support Docker Hub so set the dockerRegistry to 
-      // https://index.docker.io/v1/
-      var registry = `https://index.docker.io/v1/`;
-
-      args.dockerRegistry = registry;
+   if (this.target === `docker` || this.target === `dockerpaas`) {
       args.dockerHost = this.dockerHost;
+      args.dockerRegistry = this.dockerRegistry;
       args.dockerRegistryId = this.dockerRegistryId;
    }
 
